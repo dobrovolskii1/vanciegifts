@@ -127,7 +127,7 @@ const SourceList: React.FC<{ sources: SourceChannel[]; onAdd: (url: string) => v
       <div className="flex gap-2 mb-6">
         <input 
           type="text" 
-          placeholder="Ссылка на канал" 
+          placeholder="Ссылка на канал (например, @giftnews)" 
           value={newUrl}
           onChange={(e) => setNewUrl(e.target.value)}
           className="flex-1 bg-[#2c2c2e] border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-[#2481cc] transition-colors text-sm text-white"
@@ -144,7 +144,7 @@ const SourceList: React.FC<{ sources: SourceChannel[]; onAdd: (url: string) => v
       <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
         {sources.length === 0 ? (
           <div className="py-8 text-center text-gray-500 italic text-sm">
-            Список источников пуст.
+            Список источников пуст. Добавьте каналы через @.
           </div>
         ) : (
           sources.map((source) => (
@@ -185,7 +185,7 @@ const FeedSection: React.FC<{
           </div>
           <h3 className="text-lg font-bold mb-2">Здесь пока пусто</h3>
           <p className="text-sm text-gray-500">
-            Бот еще не подготовил новых постов. Как только они появятся, вы увидите их здесь.
+            Бот мониторит {DONOR_CHANNELS.length} каналов в реальном времени. Ожидайте новых публикаций.
           </p>
         </div>
       ) : (
@@ -243,6 +243,9 @@ const FeedSection: React.FC<{
   );
 };
 
+// --- Mock Data ---
+const DONOR_CHANNELS = ['@giftnews', '@gift_newstg', '@digest', '@UaOnlii'];
+
 // --- Main App ---
 
 const App = () => {
@@ -253,11 +256,14 @@ const App = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [posts, setPosts] = useState<GeneratedPost[]>([]);
 
-  // Simulation of periodic post fetching
   useEffect(() => {
     const savedStyle = localStorage.getItem('myStyleChannel') || '';
     const savedSourcesStr = localStorage.getItem('sourceChannels');
-    const savedSources = savedSourcesStr ? JSON.parse(savedSourcesStr) : [];
+    const savedSources = savedSourcesStr ? JSON.parse(savedSourcesStr) : DONOR_CHANNELS.map(url => ({
+        id: Math.random().toString(),
+        url: url,
+        name: url
+    }));
     
     setMyStyleChannel(savedStyle);
     setSources(savedSources);
@@ -284,11 +290,11 @@ const App = () => {
   };
 
   const addSource = (url: string) => {
-    const cleanName = url.replace('https://t.me/', '').replace('@', '').split('/').pop();
+    const formattedUrl = url.startsWith('@') ? url : (url.includes('/') ? `@${url.split('/').pop()}` : `@${url}`);
     const newSource: SourceChannel = {
       id: Date.now().toString(),
-      url: url,
-      name: cleanName ? `@${cleanName}` : url
+      url: formattedUrl,
+      name: formattedUrl
     };
     const updated = [...sources, newSource];
     setSources(updated);
@@ -333,7 +339,7 @@ const App = () => {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">AI Контент-Менеджер</h1>
           <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-widest font-bold">
-            {activeTab === AppTab.FEED ? 'Лента постов' : 'Настройки ассистента'}
+            {activeTab === AppTab.FEED ? 'Мониторинг Railway' : 'Настройки'}
           </p>
         </div>
         <StatusBadge status={status} />
@@ -353,8 +359,8 @@ const App = () => {
             <SourceList sources={sources} onAdd={addSource} onRemove={removeSource} />
             
             <div className="bg-[#1c1c1d] rounded-2xl p-5 border border-white/5">
-               <h3 className="text-sm font-bold mb-2">Управление ботом</h3>
-               <p className="text-xs text-gray-500 mb-4">Бот работает в фоновом режиме через Telethon. При нажатии на кнопку ниже вы можете приостановить мониторинг доноров.</p>
+               <h3 className="text-sm font-bold mb-2">Статус сервера Railway</h3>
+               <p className="text-xs text-gray-500 mb-4">Бот работает через Telethon. Все изменения в источниках вступят в силу после перезапуска скрипта main.py на сервере.</p>
                <button 
                 onClick={toggleBot}
                 className={`w-full py-3 rounded-xl font-bold text-sm transition-all active:scale-[0.96] border ${
@@ -363,7 +369,7 @@ const App = () => {
                   : 'bg-green-500/10 text-green-500 border-green-500/20'
                 }`}
               >
-                {status === BotStatus.RUNNING ? 'Остановить мониторинг' : 'Запустить мониторинг'}
+                {status === BotStatus.RUNNING ? 'Остановить скрипт' : 'Перезапустить скрипт'}
               </button>
             </div>
           </div>

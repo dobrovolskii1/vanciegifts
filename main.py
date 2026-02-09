@@ -1,62 +1,81 @@
+
 import os
 import asyncio
+import logging
 from telethon import TelegramClient, events
 import google.generativeai as genai
+from dotenv import load_dotenv
 
-# --- БЕЗОПАСНОЕ ПОДКЛЮЧЕНИЕ КЛЮЧЕЙ ИЗ RAILWAY ---
-# Теперь в коде нет реальных ключей, они подтянутся из настроек сервера
-API_ID = int(os.getenv('API_ID', '0'))
+# Загрузка переменных окружения (для локальной разработки, на Railway подтянутся сами)
+load_dotenv()
+
+# --- Конфигурация ---
+API_ID = int(os.getenv('API_ID', 0))
 API_HASH = os.getenv('API_HASH', '')
 BOT_TOKEN = os.getenv('BOT_TOKEN', '')
 GEMINI_KEY = os.getenv('GEMINI_KEY', '')
+MY_ID = 7991221711  # Ваш Telegram ID
 
-# --- НАСТРОЙКИ КАНАЛОВ И ПОЛЬЗОВАТЕЛЯ ---
-# Добавили @ для стабильной работы Telethon
+# Список доноров (строго с @ как просили)
 DONOR_CHANNELS = ['@giftnews', '@gift_newstg', '@digest', '@UaOnlii']
-MY_ID = 7991221711  # Твой ID, куда будут приходить рерайты
 
-# Настройка ИИ Gemini
+# Настройка Gemini
 genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+# Используем gemini-3-pro-preview для качественного рерайта
+model = genai.GenerativeModel('gemini-3-pro-preview')
 
-# Создаем клиента, используя файл сессии
+# Инициализация клиента Telethon (используем сессию 'my_session')
 client = TelegramClient('my_session', API_ID, API_HASH)
 
-# --- ОБРАБОТЧИК СООБЩЕНИЙ ---
+# Инструкция для ИИ (системный промпт)
+# В реальной версии здесь можно подтягивать посты из вашего эталонного канала для обучения
+SYSTEM_INSTRUCTION = """
+Ты — профессиональный редактор Telegram-каналов. 
+Твоя задача: взять текст новости и переписать его, сохраняя смысл, но адаптируя под стиль 'авторского блога'. 
+Используй короткие предложения, активные глаголы и умеренное количество эмодзи. 
+Не добавляй отсебятины, только рерайт предоставленного контента.
+"""
+
+async def rewrite_text(text):
+    try:
+        prompt = f"{SYSTEM_INSTRUCTION}\n\nВот текст для рерайта:\n{text}"
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        print(f"❌ Ошибка Gemini: {e}")
+        return None
+
 @client.on(events.NewMessage(chats=DONOR_CHANNELS))
 async def handler(event):
-    # Логируем в Railway, чтобы видеть, что пост пойман
-    chat = await event.get_chat()
-    chat_username = getattr(chat, 'username', 'unknown')
-    print(f"📩 Поймал пост из канала: @{chat_username}")
-
-    original_text = event.message.message
-    if not original_text or len(original_text) < 5:
-        return
+    # Логирование как заказывали
+    print(f"📩 Получено сообщение из: {event.chat.username if event.chat.username else event.chat.title}")
     
-    try:
-        # Формируем задание для ИИ
-        prompt = f"Перепиши этот текст в крутом современном стиле для Телеграм-канала, используй эмодзи: {original_text}"
-        response = model.generate_content(prompt)
-        
-        # Отправляем готовый рерайт тебе в личку
-        await client.send_message(MY_ID, f"🆕 **Рерайт поста из @{chat_username}:**\n\n{response.text}")
-        print(f"✅ Успешно отправил рерайт в личку!")
-        
-    except Exception as e:
-        print(f"❌ Ошибка при обработке: {e}")
+    if not event.text or len(event.text) < 10:
+        return
 
-# Тестовая функция: отвечает тебе, если ты напишешь боту лично
-@client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
-async def test_handler(event):
-    if event.sender_id == MY_ID:
-        await event.respond("🤖 Связь установлена! Я слежу за каналами и пришлю рерайт, как только там что-то появится.")
-        print("📨 Ответил на тестовое сообщение в личке.")
+    # Отправляем текст на рерайт
+    rewritten = await rewrite_text(event.text)
+    
+    if rewritten:
+        # Формируем сообщение для утверждения
+        source_link = f"https://t.me/{event.chat.username}/{event.id}" if event.chat.username else "в закрытом канале"
+        
+        preview_message = (
+            f"🔔 **Новый пост на утверждение!**\n\n"
+            f"📝 **Рерайт:**\n{rewritten}\n\n"
+            f"🔗 [Оригинальный пост]({source_link})\n"
+            f"👤 Источник: @{event.chat.username}"
+        )
+        
+        # Шлем именно вам (MY_ID)
+        await client.send_message(MY_ID, preview_message, link_preview=False)
+        print(f"✅ Готовый пост отправлен пользователю {MY_ID}")
 
 async def main():
-    print("🚀 Запуск облачной сессии Telegram...")
+    print("🚀 Бот запускается...")
+    # Авторизация (на Railway важно иметь файл сессии или использовать StringSession)
     await client.start()
-    print(f"✅ Бот активен! Слежу за: {', '.join(DONOR_CHANNELS)}")
+    print("🤖 Мониторинг каналов запущен. Ожидание сообщений...")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
