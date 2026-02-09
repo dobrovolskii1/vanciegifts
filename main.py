@@ -3,7 +3,7 @@ import os
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from telethon import TelegramClient, events, functions, types
+from telethon import TelegramClient, events, functions, types, errors
 from telethon.sessions import StringSession
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -11,17 +11,16 @@ from dotenv import load_dotenv
 # Загрузка переменных окружения
 load_dotenv()
 
-# --- Конфигурация из окружения (Railway) ---
-# Инициализация переменных (ОСТАВЛЯЕМ БЛОК НЕТРОНУТЫМ ПО ТРЕБОВАНИЮ)
+# --- Конфигурация ---
+# Критично: API_HASH теперь берется только из переменных окружения Railway/системы
 API_ID = int(os.getenv('API_ID', 0))
 API_HASH = os.getenv('API_HASH', '')
 SESSION_DATA = os.getenv('TELEGRAM_SESSION', '')
 GEMINI_KEY = os.getenv('GEMINI_KEY', '')
 MY_ID = 7991221711 
 
-# Настройки стиля и доноров
-# DONOR_CHANNELS всегда со знаком @
-DONOR_CHANNELS_RAW = os.getenv('DONOR_CHANNELS', '@giftnews,@gift_newstg,@digest,@UaOnlii')
+# Настройки каналов
+DONOR_CHANNELS_RAW = os.getenv('DONOR_CHANNELS', '@giftnews,@gift_newstg')
 DONOR_CHANNELS = [c.strip() for c in DONOR_CHANNELS_RAW.split(',') if c.strip().startswith('@')]
 REFERENCE_CHANNEL = os.getenv('REFERENCE_CHANNEL', '@my_channel_style')
 
@@ -29,102 +28,93 @@ REFERENCE_CHANNEL = os.getenv('REFERENCE_CHANNEL', '@my_channel_style')
 genai.configure(api_key=GEMINI_KEY)
 model = genai.GenerativeModel('gemini-3-flash-preview')
 
-# Инициализация клиента через StringSession
+# Инициализация клиента Telethon
 if SESSION_DATA:
     client = TelegramClient(StringSession(SESSION_DATA), API_ID, API_HASH)
 else:
     client = TelegramClient('my_session', API_ID, API_HASH)
 
 async def get_style_examples():
-    """Скачивает посты за последние 30 дней для глубокого анализа стиля"""
-    print(f"📊 Начинаю глубокий анализ стиля {REFERENCE_CHANNEL} за последние 30 дней...")
+    """Сбор примеров постов для обучения модели стилю"""
+    if REFERENCE_CHANNEL == '@my_channel_style' or not REFERENCE_CHANNEL:
+        return "Стиль: Краткие новости, деловой стиль, использование эмодзи."
+
     try:
+        entity = await client.get_entity(REFERENCE_CHANNEL)
         date_threshold = datetime.now(timezone.utc) - timedelta(days=30)
         examples = []
         
-        # Перебираем сообщения за месяц (лимит 50 для стабильности контекста)
-        async for message in client.iter_messages(REFERENCE_CHANNEL, limit=50):
+        async for message in client.iter_messages(entity, limit=20):
             if message.date < date_threshold:
                 break
-            if message.text and len(message.text) > 40:
+            if message.text and len(message.text) > 20:
                 examples.append(message.text)
         
         if not examples:
-            print("⚠️ За месяц постов не найдено. Беру последние 5.")
-            messages = await client.get_messages(REFERENCE_CHANNEL, limit=5)
-            examples = [m.text for m in messages if m.text]
+            return "Стиль: Авторский блог, фокус на технологиях."
 
-        context = "\n--- НОВЫЙ ПОСТ ---\n".join(examples)
-        
-        instruction = (
-            f"Ты — профессиональный лингвист-аналитик. Перед тобой массив постов из канала {REFERENCE_CHANNEL} за последний месяц.\n"
-            f"1. Изучи их тональность, ритм, использование сленга и эмодзи.\n"
-            f"2. Обрати внимание на структуру (заголовки, списки, призывы).\n"
-            f"3. Твоя задача: сделать рерайт новой новости так, чтобы он выглядел как родной пост в этом канале.\n"
-            f"\nБАЗА ДЛЯ АНАЛИЗА СТИЛЯ:\n{context}"
-        )
-        return instruction
+        context = "\n---\n".join(examples[:10])
+        return f"Изучи стиль этих постов: {context}\nПерепиши новую новость в точно таком же стиле."
     except Exception as e:
-        print(f"⚠️ Ошибка при сборе стиля за месяц: {e}")
-        return "Стиль: лаконичный, информативный, современный Telegram-стиль."
+        logging.warning(f"Не удалось получить стиль из {REFERENCE_CHANNEL}: {e}")
+        return "Стиль: Современный Telegram-канал."
 
 async def rewrite_text(text):
+    """Генерация рерайта через Gemini"""
     try:
-        style_instruction = await get_style_examples()
-        prompt = f"{style_instruction}\n\nНОВАЯ НОВОСТЬ ДЛЯ ОБРАБОТКИ:\n{text}\n\nНапиши готовый пост:"
+        style_instr = await get_style_examples()
+        prompt = f"{style_instr}\n\nНОВОСТЬ:\n{text}\n\nНапиши только текст поста:"
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        print(f"❌ Ошибка Gemini API: {e}")
+        logging.error(f"Ошибка Gemini API: {e}")
         return None
 
-async def join_and_warmup():
-    print("🔄 Синхронизация источников...")
-    all_targets = list(set(DONOR_CHANNELS + [REFERENCE_CHANNEL]))
-    for channel in all_targets:
+async def join_channels():
+    """Вступление в каналы-доноры для активации мониторинга"""
+    for channel in DONOR_CHANNELS:
         try:
-            await client.get_entity(channel)
-            if channel in DONOR_CHANNELS:
-                await client(functions.channels.JoinChannelRequest(channel))
+            await client(functions.channels.JoinChannelRequest(channel))
+            print(f"📡 Мониторинг активен: {channel}")
         except Exception as e:
-            print(f"⚠️ Ошибка доступа к {channel}: {e}")
+            print(f"⚠️ Не удалось подключиться к {channel}: {e}")
 
 @client.on(events.NewMessage(chats=DONOR_CHANNELS))
 async def handler(event):
-    chat_username = event.chat.username if hasattr(event.chat, 'username') else 'unknown'
-    print(f"📩 Входящая новость от @{chat_username}")
-    
-    if not event.text or len(event.text) < 50:
+    """Обработка новых постов из каналов-доноров"""
+    if not event.text or len(event.text) < 15:
         return
 
-    print(f"🤖 Глубокий рерайт под стиль {REFERENCE_CHANNEL}...")
-    rewritten = await rewrite_text(event.text)
-    
-    if rewritten:
-        source_link = f"https://t.me/{chat_username}/{event.id}" if chat_username != 'unknown' else "link"
+    try:
+        chat = await event.get_chat()
+        source_title = getattr(chat, 'title', 'Источник')
+        print(f"📥 Новое сообщение из {source_title}")
         
-        final_post = (
-            f"⚡️ **ВАРИАНТ ПОД ВАШ СТИЛЬ**\n\n"
-            f"{rewritten}\n\n"
-            f"--- \n"
-            f"📥 Источник: @{chat_username}\n"
-            f"🔗 [Оригинал]({source_link})"
-        )
-        
-        await client.send_message(MY_ID, final_post, link_preview=False)
-        print(f"🚀 Пост успешно адаптирован и отправлен!")
+        rewritten = await rewrite_text(event.text)
+        if rewritten:
+            msg = f"📝 **ВАРИАНТ ПОСТА**\n\n{rewritten}\n\n---\n📡 Источник: {source_title}"
+            await client.send_message(MY_ID, msg)
+            print(f"🚀 Рерайт отправлен пользователю {MY_ID}")
+    except Exception as e:
+        logging.error(f"Ошибка в обработчике: {e}")
 
 async def main():
-    print("🛰 Бот-ассистент запускается...")
+    if not API_ID or not API_HASH:
+        print("❌ ОШИБКА: API_ID или API_HASH не заданы в окружении!")
+        return
+
+    print("🛰 Запуск бота...")
     await client.start()
     
-    if not SESSION_DATA:
-        print(f"\n🔑 СТРОКА СЕССИИ (TELEGRAM_SESSION):\n{client.session.save()}\n")
+    try:
+        await client.send_message(MY_ID, "✅ **Бот запущен.**\nИщу новые посты в каналах-донорах...")
+    except:
+        pass
 
-    await join_and_warmup()
-    print("📡 Мониторинг запущен. Ожидаю новости.")
+    await join_channels()
+    print("📡 Мониторинг каналов запущен. Ожидание сообщений...")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.WARNING)
+    logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
