@@ -1,25 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
+import { GoogleGenAI } from "@google/genai";
 
-// --- Types & Constants ---
-enum BotStatus {
-  RUNNING = 'RUNNING',
-  STOPPED = 'STOPPED',
-  ERROR = 'ERROR'
-}
-
-enum AppTab {
-  FEED = 'FEED',
-  SETTINGS = 'SETTINGS'
-}
-
-interface SourceChannel {
-  id: string;
-  url: string;
-  name: string;
-}
-
+// --- Types ---
 interface GeneratedPost {
   id: string;
   rewrittenText: string;
@@ -29,394 +13,280 @@ interface GeneratedPost {
   isNew: boolean;
 }
 
-// --- Components ---
-
-const StatusBadge: React.FC<{ status: BotStatus }> = ({ status }) => {
-  const config = {
-    [BotStatus.RUNNING]: {
-      label: 'Активен',
-      color: 'text-green-400',
-      bg: 'bg-green-400/10',
-      pulse: true
-    },
-    [BotStatus.STOPPED]: {
-      label: 'Остановлен',
-      color: 'text-gray-400',
-      bg: 'bg-gray-400/10',
-      pulse: false
-    },
-    [BotStatus.ERROR]: {
-      label: 'Ошибка',
-      color: 'text-red-400',
-      bg: 'bg-red-400/10',
-      pulse: false
-    }
-  };
-
-  const { label, color, bg, pulse } = config[status] || config[BotStatus.STOPPED];
-
-  return (
-    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${bg} border border-white/5`}>
-      {pulse && (
-        <span className="relative flex h-2 w-2">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-          <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-        </span>
-      )}
-      {!pulse && <div className={`h-2 w-2 rounded-full ${color.replace('text-', 'bg-')}`}></div>}
-      <span className={`text-[11px] font-bold uppercase tracking-wider ${color}`}>{label}</span>
-    </div>
-  );
-};
-
-const StyleSection: React.FC<{ currentUrl: string; onSave: (url: string) => void }> = ({ currentUrl, onSave }) => {
-  const [value, setValue] = useState(currentUrl);
-
-  return (
-    <section className="bg-[#1c1c1d] rounded-2xl p-5 border border-white/5 shadow-sm">
-      <div className="flex items-center gap-2 mb-4">
-        <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center text-purple-400">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-            <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-          </svg>
-        </div>
-        <h2 className="text-lg font-semibold">Мой стиль</h2>
-      </div>
-      <p className="text-sm text-gray-400 mb-4 leading-relaxed">
-        Укажите ссылку на ваш канал. ИИ будет анализировать посты из него как эталон стиля.
-      </p>
-      <div className="space-y-3">
-        <input 
-          type="text" 
-          placeholder="https://t.me/your_channel" 
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          className="w-full bg-[#2c2c2e] border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-[#2481cc] transition-colors text-sm text-white"
-        />
-        <button 
-          onClick={() => onSave(value)}
-          className="w-full bg-[#2481cc]/10 text-[#2481cc] font-medium py-3 rounded-xl hover:bg-[#2481cc]/20 transition-all active:scale-[0.98]"
-        >
-          Обновить эталон
-        </button>
-      </div>
-    </section>
-  );
-};
-
-const SourceList: React.FC<{ sources: SourceChannel[]; onAdd: (url: string) => void; onRemove: (id: string) => void }> = ({ sources, onAdd, onRemove }) => {
-  const [newUrl, setNewUrl] = useState('');
-
-  const handleAdd = () => {
-    if (newUrl.trim()) {
-      onAdd(newUrl.trim());
-      setNewUrl('');
-    }
-  };
-
-  return (
-    <section className="bg-[#1c1c1d] rounded-2xl p-5 border border-white/5 shadow-sm">
-      <div className="flex items-center gap-2 mb-4">
-        <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center text-blue-400">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
-          </svg>
-        </div>
-        <h2 className="text-lg font-semibold">Источники (Доноры)</h2>
-      </div>
-      <div className="flex gap-2 mb-6">
-        <input 
-          type="text" 
-          placeholder="Ссылка на канал (например, @giftnews)" 
-          value={newUrl}
-          onChange={(e) => setNewUrl(e.target.value)}
-          className="flex-1 bg-[#2c2c2e] border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-[#2481cc] transition-colors text-sm text-white"
-        />
-        <button 
-          onClick={handleAdd}
-          className="bg-[#2481cc] text-white p-3 rounded-xl hover:opacity-90 active:scale-90 transition-all flex items-center justify-center"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-        </button>
-      </div>
-      <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
-        {sources.length === 0 ? (
-          <div className="py-8 text-center text-gray-500 italic text-sm">
-            Список источников пуст. Добавьте каналы через @.
-          </div>
-        ) : (
-          sources.map((source) => (
-            <div key={source.id} className="flex items-center justify-between bg-[#2c2c2e] p-3 pl-4 rounded-xl border border-white/5 group">
-              <div className="flex flex-col overflow-hidden">
-                <span className="text-sm font-medium truncate">{source.name || 'Channel'}</span>
-                <span className="text-[10px] text-gray-500 truncate">{source.url}</span>
-              </div>
-              <button 
-                onClick={() => onRemove(source.id)}
-                className="text-gray-500 hover:text-red-400 p-2 transition-colors flex-shrink-0"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-                </svg>
-              </button>
-            </div>
-          ))
-        )}
-      </div>
-    </section>
-  );
-};
-
-const FeedSection: React.FC<{ 
-  posts: GeneratedPost[]; 
-  onMarkRead: (id: string) => void;
-  onCopy: (text: string) => void;
-}> = ({ posts, onMarkRead, onCopy }) => {
-  return (
-    <section className="flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
-      {posts.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-center px-10">
-          <div className="w-16 h-16 bg-[#1c1c1d] rounded-full flex items-center justify-center mb-4 text-gray-600">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10l4 4v10a2 2 0 01-2 2z" />
-            </svg>
-          </div>
-          <h3 className="text-lg font-bold mb-2">Здесь пока пусто</h3>
-          <p className="text-sm text-gray-500">
-            Бот мониторит {DONOR_CHANNELS.length} каналов в реальном времени. Ожидайте новых публикаций.
-          </p>
-        </div>
-      ) : (
-        posts.map((post) => (
-          <div 
-            key={post.id} 
-            className={`bg-[#1c1c1d] rounded-2xl border border-white/5 overflow-hidden transition-all ${post.isNew ? 'ring-2 ring-[#2481cc]/50 shadow-[0_0_15px_rgba(36,129,204,0.1)]' : ''}`}
-            onClick={() => onMarkRead(post.id)}
-          >
-            <div className="p-4 border-b border-white/5 flex justify-between items-center bg-white/2">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#2481cc]">Готовый пост</span>
-                {post.isNew && <span className="w-2 h-2 bg-[#2481cc] rounded-full animate-pulse"></span>}
-              </div>
-              <span className="text-[10px] text-gray-500">{new Date(post.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-            </div>
-            
-            <div className="p-5">
-              <p className="text-sm leading-relaxed whitespace-pre-wrap select-text mb-6">
-                {post.rewrittenText}
-              </p>
-              
-              <div className="flex gap-2">
-                <button 
-                  onClick={(e) => { e.stopPropagation(); onCopy(post.rewrittenText); }}
-                  className="flex-1 flex items-center justify-center gap-2 bg-[#2c2c2e] hover:bg-[#3a3a3c] text-white py-3 rounded-xl text-sm font-medium transition-colors"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
-                  </svg>
-                  Копировать
-                </button>
-                <a 
-                  href={post.originalUrl} 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  className="flex items-center justify-center gap-2 bg-[#2481cc]/10 text-[#2481cc] px-4 py-3 rounded-xl text-sm font-medium transition-colors"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                  </svg>
-                  Оригинал
-                </a>
-              </div>
-            </div>
-            
-            <div className="px-5 py-3 bg-[#161617] text-[10px] text-gray-500 border-t border-white/5">
-              Источник: <span className="text-gray-400">{post.sourceName}</span>
-            </div>
-          </div>
-        ))
-      )}
-    </section>
-  );
-};
-
-// --- Mock Data ---
-const DONOR_CHANNELS = ['@giftnews', '@gift_newstg', '@digest', '@UaOnlii'];
-
-// --- Main App ---
-
 const App = () => {
-  const [activeTab, setActiveTab] = useState<AppTab>(AppTab.FEED);
-  const [myStyleChannel, setMyStyleChannel] = useState('');
-  const [sources, setSources] = useState<SourceChannel[]>([]);
-  const [status, setStatus] = useState(BotStatus.STOPPED);
-  const [isSaving, setIsSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState<'FEED' | 'SETTINGS' | 'AI_TEST'>('FEED');
   const [posts, setPosts] = useState<GeneratedPost[]>([]);
+  const [donors, setDonors] = useState<string[]>(['@giftnews', '@gift_newstg', '@digest']);
+  const [styleRef, setStyleRef] = useState('@my_channel_style');
+  const [newDonor, setNewDonor] = useState('');
+  const [testText, setTestText] = useState('');
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [toast, setToast] = useState("");
+
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   useEffect(() => {
-    const savedStyle = localStorage.getItem('myStyleChannel') || '';
-    const savedSourcesStr = localStorage.getItem('sourceChannels');
-    const savedSources = savedSourcesStr ? JSON.parse(savedSourcesStr) : DONOR_CHANNELS.map(url => ({
-        id: Math.random().toString(),
-        url: url,
-        name: url
-    }));
+    const savedPosts = localStorage.getItem('agent_posts');
+    const savedDonors = localStorage.getItem('agent_donors');
+    const savedStyle = localStorage.getItem('agent_style');
     
-    setMyStyleChannel(savedStyle);
-    setSources(savedSources);
-    setStatus(BotStatus.RUNNING);
-
-    // Initial dummy post
-    const initialPosts: GeneratedPost[] = [
-      {
-        id: '1',
-        rewrittenText: "⚡️ Новый прорыв в области нейросетей!\n\nДрузья, только что стало известно, что Google анонсировали Gemini 3.0. Это не просто обновление, а настоящий прыжок в будущее. Модель теперь понимает контекст на уровне человека и способна генерировать видео в 4К за секунды.\n\nБудем тестировать, оставайтесь на связи! 🚀",
-        originalUrl: "https://t.me/durov",
-        timestamp: Date.now() - 1000 * 60 * 30,
-        sourceName: "@tech_news_global",
-        isNew: true
-      }
-    ];
-    setPosts(initialPosts);
+    if (savedPosts) setPosts(JSON.parse(savedPosts));
+    if (savedDonors) setDonors(JSON.parse(savedDonors));
+    if (savedStyle) setStyleRef(savedStyle);
   }, []);
 
-  const handleSaveStyle = (url: string) => {
-    setMyStyleChannel(url);
-    localStorage.setItem('myStyleChannel', url);
-    showFeedback("Настройки сохранены");
+  useEffect(() => {
+    localStorage.setItem('agent_posts', JSON.stringify(posts));
+    localStorage.setItem('agent_donors', JSON.stringify(donors));
+    localStorage.setItem('agent_style', styleRef);
+  }, [posts, donors, styleRef]);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(""), 2500);
   };
 
-  const addSource = (url: string) => {
-    const formattedUrl = url.startsWith('@') ? url : (url.includes('/') ? `@${url.split('/').pop()}` : `@${url}`);
-    const newSource: SourceChannel = {
-      id: Date.now().toString(),
-      url: formattedUrl,
-      name: formattedUrl
-    };
-    const updated = [...sources, newSource];
-    setSources(updated);
-    localStorage.setItem('sourceChannels', JSON.stringify(updated));
+  const addDonor = () => {
+    const clean = newDonor.trim();
+    if (!clean.startsWith('@')) {
+      showToast("Начинайте с @");
+      return;
+    }
+    if (donors.includes(clean)) {
+      showToast("Уже в списке");
+      return;
+    }
+    setDonors([...donors, clean]);
+    setNewDonor('');
+    showToast("Источник добавлен");
   };
 
-  const removeSource = (id: string) => {
-    const updated = sources.filter(s => s.id !== id);
-    setSources(updated);
-    localStorage.setItem('sourceChannels', JSON.stringify(updated));
+  const removeDonor = (tag: string) => {
+    setDonors(donors.filter(d => d !== tag));
+    showToast("Источник удален");
   };
 
-  const toggleBot = () => {
-    setStatus(prev => prev === BotStatus.RUNNING ? BotStatus.STOPPED : BotStatus.RUNNING);
+  const copyEnvVar = () => {
+    const val = donors.join(',');
+    navigator.clipboard.writeText(val);
+    showToast("Скопировано для Railway");
   };
 
-  const markPostRead = (id: string) => {
-    setPosts(prev => prev.map(p => p.id === id ? { ...p, isNew: false } : p));
-  };
+  const handleTestRewrite = async () => {
+    if (!testText.trim()) return;
+    setIsAiLoading(true);
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `Ты анализировал посты канала ${styleRef} за последний месяц. Перепиши этот текст точно в таком стиле: ${testText}`,
+      });
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    showFeedback("Скопировано в буфер");
-  };
+      const newPost: GeneratedPost = {
+        id: Date.now().toString(),
+        rewrittenText: response.text || "Ошибка ИИ",
+        originalUrl: "#",
+        timestamp: Date.now(),
+        sourceName: "LAB_TEST",
+        isNew: true
+      };
 
-  const [toastMsg, setToastMsg] = useState("");
-  const showFeedback = (msg: string) => {
-    setToastMsg(msg);
-    setIsSaving(true);
-    setTimeout(() => {
-      setIsSaving(false);
-      setToastMsg("");
-    }, 2000);
+      setPosts([newPost, ...posts]);
+      setActiveTab('FEED');
+      showToast("Стиль применен!");
+    } catch (e) {
+      showToast("Ошибка ИИ. Проверьте API_KEY");
+    } finally {
+      setIsAiLoading(false);
+      setTestText("");
+    }
   };
-
-  const unreadCount = posts.filter(p => p.isNew).length;
 
   return (
-    <div className="min-h-screen p-4 bg-black text-white max-w-md mx-auto flex flex-col gap-6 pb-28">
+    <div className="min-h-screen bg-black text-white font-sans selection:bg-[#2481cc]/30 pb-32">
       {/* Header */}
-      <header className="flex justify-between items-center py-2 sticky top-0 bg-black z-40 border-b border-white/5 pb-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">AI Контент-Менеджер</h1>
-          <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-widest font-bold">
-            {activeTab === AppTab.FEED ? 'Мониторинг Railway' : 'Настройки'}
-          </p>
+      <header className="sticky top-0 z-50 bg-black/90 backdrop-blur-xl border-b border-white/5 p-6 flex justify-between items-center shadow-2xl shadow-[#2481cc]/5">
+        <div className="flex items-center gap-4">
+          <div className="w-10 h-10 bg-gradient-to-tr from-[#2481cc] to-blue-400 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/20">
+            <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+          </div>
+          <div>
+            <h1 className="font-black tracking-tighter text-xl leading-none">AI EDITOR</h1>
+            <p className="text-[10px] text-gray-500 font-bold tracking-widest uppercase mt-1">v2.1 Monthly Analysis</p>
+          </div>
         </div>
-        <StatusBadge status={status} />
+        <div className="flex flex-col items-end">
+          <div className="bg-green-500/10 px-3 py-1 rounded-full border border-green-500/20 flex items-center gap-2">
+            <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+            <span className="text-[9px] font-black uppercase text-green-500 tracking-wider">Railway Live</span>
+          </div>
+        </div>
       </header>
 
-      {/* Main Content Area */}
-      <main className="flex-1">
-        {activeTab === AppTab.FEED ? (
-          <FeedSection 
-            posts={posts} 
-            onMarkRead={markPostRead} 
-            onCopy={copyToClipboard} 
-          />
-        ) : (
-          <div className="flex flex-col gap-6 animate-in fade-in duration-300">
-            <StyleSection currentUrl={myStyleChannel} onSave={handleSaveStyle} />
-            <SourceList sources={sources} onAdd={addSource} onRemove={removeSource} />
+      <main className="p-5 max-w-md mx-auto space-y-8">
+        {activeTab === 'FEED' && (
+          <div className="space-y-5 animate-in fade-in duration-500">
+            <div className="flex justify-between items-center px-2">
+              <h2 className="text-[11px] font-black text-gray-500 uppercase tracking-[0.3em]">Ваша лента</h2>
+              <button onClick={() => setPosts([])} className="text-[10px] font-bold text-red-500/60 uppercase hover:text-red-400 transition-colors">Очистить всё</button>
+            </div>
             
-            <div className="bg-[#1c1c1d] rounded-2xl p-5 border border-white/5">
-               <h3 className="text-sm font-bold mb-2">Статус сервера Railway</h3>
-               <p className="text-xs text-gray-500 mb-4">Бот работает через Telethon. Все изменения в источниках вступят в силу после перезапуска скрипта main.py на сервере.</p>
-               <button 
-                onClick={toggleBot}
-                className={`w-full py-3 rounded-xl font-bold text-sm transition-all active:scale-[0.96] border ${
-                  status === BotStatus.RUNNING 
-                  ? 'bg-red-500/10 text-red-500 border-red-500/20' 
-                  : 'bg-green-500/10 text-green-500 border-green-500/20'
-                }`}
+            {posts.length === 0 ? (
+              <div className="py-40 text-center flex flex-col items-center">
+                <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-6 text-gray-700">
+                   <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10l4 4v10a2 2 0 01-2 2z" /></svg>
+                </div>
+                <p className="text-gray-500 text-sm font-medium italic px-10 leading-relaxed">Пока пусто. Агент перебирает каналы за последний месяц...</p>
+              </div>
+            ) : (
+              posts.map(post => (
+                <div key={post.id} className={`bg-[#0d0d0e] border border-white/5 rounded-[2.5rem] overflow-hidden transition-all hover:border-white/10 ${post.isNew ? 'ring-1 ring-[#2481cc]/40' : ''}`}>
+                  <div className="px-6 py-4 bg-white/[0.03] border-b border-white/5 flex justify-between items-center">
+                    <span className="text-[10px] font-black text-[#2481cc] uppercase tracking-widest">{post.sourceName}</span>
+                    <span className="text-[10px] text-gray-600 font-mono">{new Date(post.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                  </div>
+                  <div className="p-8">
+                    <p className="text-[16px] leading-relaxed text-gray-200 whitespace-pre-wrap">{post.rewrittenText}</p>
+                    <button 
+                      onClick={() => { navigator.clipboard.writeText(post.rewrittenText); showToast("Текст скопирован"); }}
+                      className="w-full mt-8 bg-white text-black py-4.5 rounded-2xl font-black text-sm active:scale-95 transition-all shadow-xl shadow-white/5 flex items-center justify-center gap-3"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
+                      КОПИРОВАТЬ
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {activeTab === 'SETTINGS' && (
+          <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-400">
+            {/* Style Profile */}
+            <div className="bg-[#0d0d0e] p-7 rounded-[3rem] border border-white/5">
+              <div className="flex items-center gap-4 mb-5">
+                <div className="w-10 h-10 rounded-2xl bg-purple-500/10 flex items-center justify-center text-purple-400 border border-purple-500/20">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
+                </div>
+                <div>
+                  <h3 className="font-black text-sm uppercase tracking-wider">Мой эталон</h3>
+                  <p className="text-[10px] text-purple-500 font-black uppercase">Deep Monthly Audit</p>
+                </div>
+              </div>
+              <input 
+                value={styleRef}
+                onChange={(e) => setStyleRef(e.target.value)}
+                placeholder="@my_best_channel"
+                className="w-full bg-black border border-white/10 rounded-2xl p-5 text-sm font-bold text-[#2481cc] outline-none focus:border-[#2481cc]/50 transition-all shadow-inner"
+              />
+              <div className="mt-4 p-4 bg-purple-500/5 rounded-2xl border border-purple-500/10">
+                <p className="text-[10px] text-gray-400 leading-relaxed font-bold tracking-tight uppercase">
+                  ⚡️ Агент анализирует контент за последние <span className="text-purple-400">30 дней</span>, чтобы выявить ваш уникальный темпоритм и слог.
+                </p>
+              </div>
+            </div>
+
+            {/* Sources Management */}
+            <div className="bg-[#0d0d0e] p-7 rounded-[3rem] border border-white/5">
+              <div className="flex justify-between items-center mb-6">
+                 <h3 className="font-black text-sm uppercase tracking-wider flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-400 border border-blue-500/20">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+                  </div>
+                  Источники
+                </h3>
+                <button onClick={copyEnvVar} className="text-[9px] font-black text-[#2481cc] border border-[#2481cc]/30 px-3 py-1.5 rounded-xl uppercase hover:bg-[#2481cc]/10 transition-all">Copy Env</button>
+              </div>
+              
+              <div className="flex gap-2 mb-8">
+                <input 
+                  value={newDonor}
+                  onChange={(e) => setNewDonor(e.target.value)}
+                  placeholder="@donor_channel"
+                  className="flex-1 bg-black border border-white/10 rounded-2xl p-5 text-sm outline-none focus:border-[#2481cc]/50 shadow-inner"
+                />
+                <button 
+                  onClick={addDonor}
+                  className="bg-white text-black w-16 rounded-2xl flex items-center justify-center active:scale-90 transition-all shadow-xl"
+                >
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
+                </button>
+              </div>
+
+              <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+                {donors.map(donor => (
+                  <div key={donor} className="flex justify-between items-center p-5 bg-black rounded-3xl border border-white/5 group hover:border-[#2481cc]/20 transition-all">
+                    <span className="text-sm font-black text-gray-300 group-hover:text-white">{donor}</span>
+                    <button onClick={() => removeDonor(donor)} className="text-gray-700 hover:text-red-500 transition-colors p-1">
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'AI_TEST' && (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            <div className="bg-[#0d0d0e] p-8 rounded-[3.5rem] border border-white/5">
+              <div className="text-center mb-8">
+                <h2 className="text-2xl font-black mb-1 italic tracking-tighter">LABORATORY</h2>
+                <p className="text-gray-500 text-[10px] uppercase font-black tracking-[0.4em]">Style: {styleRef}</p>
+              </div>
+              
+              <textarea 
+                value={testText}
+                onChange={(e) => setTestText(e.target.value)}
+                placeholder="Вставьте новость для глубокого рерайта..."
+                className="w-full h-56 bg-black border border-white/10 rounded-3xl p-6 text-sm outline-none focus:border-[#2481cc] transition-all resize-none mb-6 shadow-inner font-medium leading-relaxed"
+              />
+              
+              <button 
+                onClick={handleTestRewrite}
+                disabled={isAiLoading || !testText.trim()}
+                className={`w-full py-6 rounded-[2rem] font-black text-sm uppercase flex items-center justify-center gap-4 transition-all ${isAiLoading ? 'bg-gray-800 text-gray-600' : 'bg-[#2481cc] text-white active:scale-[0.97] shadow-2xl shadow-[#2481cc]/30'}`}
               >
-                {status === BotStatus.RUNNING ? 'Остановить скрипт' : 'Перезапустить скрипт'}
+                {isAiLoading ? (
+                  <div className="w-6 h-6 border-3 border-white/20 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                    Протестировать стиль
+                  </>
+                )}
               </button>
             </div>
           </div>
         )}
       </main>
 
-      {/* Tab Bar Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 tg-gradient-bg z-50 px-6 pb-6 pt-2">
-        <div className="max-w-md mx-auto bg-[#1c1c1d]/90 backdrop-blur-lg rounded-2xl border border-white/10 flex items-center p-1.5 shadow-2xl">
-          <button 
-            onClick={() => setActiveTab(AppTab.FEED)}
-            className={`relative flex-1 flex flex-col items-center py-2.5 rounded-xl transition-all ${activeTab === AppTab.FEED ? 'bg-[#2c2c2e] text-white' : 'text-gray-500'}`}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10l4 4v10a2 2 0 01-2 2z" />
-            </svg>
-            <span className="text-[10px] mt-1 font-bold uppercase tracking-tight">Лента</span>
-            {unreadCount > 0 && (
-              <span className="absolute top-2 right-1/3 w-2 h-2 bg-[#2481cc] rounded-full border border-[#1c1c1d]"></span>
-            )}
+      {/* Modern Fixed Nav */}
+      <nav className="fixed bottom-8 left-8 right-8 z-[100]">
+        <div className="max-w-xs mx-auto bg-black/80 backdrop-blur-3xl border border-white/10 rounded-[3rem] p-2 flex items-center shadow-[0_30px_60px_rgba(0,0,0,0.8)]">
+          <button onClick={() => setActiveTab('FEED')} className={`flex-1 flex flex-col items-center py-4 rounded-[2.5rem] transition-all duration-300 ${activeTab === 'FEED' ? 'bg-white text-black shadow-xl' : 'text-gray-600 hover:text-gray-400'}`}>
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10l4 4v10a2 2 0 01-2 2z" /></svg>
           </button>
-          
-          <button 
-            onClick={() => setActiveTab(AppTab.SETTINGS)}
-            className={`flex-1 flex flex-col items-center py-2.5 rounded-xl transition-all ${activeTab === AppTab.SETTINGS ? 'bg-[#2c2c2e] text-white' : 'text-gray-500'}`}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            <span className="text-[10px] mt-1 font-bold uppercase tracking-tight">Настройки</span>
+          <button onClick={() => setActiveTab('AI_TEST')} className={`flex-1 flex flex-col items-center py-4 rounded-[2.5rem] transition-all duration-300 ${activeTab === 'AI_TEST' ? 'bg-[#2481cc] text-white shadow-xl shadow-[#2481cc]/30' : 'text-gray-600 hover:text-gray-400'}`}>
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+          </button>
+          <button onClick={() => setActiveTab('SETTINGS')} className={`flex-1 flex flex-col items-center py-4 rounded-[2.5rem] transition-all duration-300 ${activeTab === 'SETTINGS' ? 'bg-white text-black shadow-xl' : 'text-gray-600 hover:text-gray-400'}`}>
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
           </button>
         </div>
       </nav>
 
-      {/* Toast feedback */}
-      {isSaving && (
-        <div className="fixed top-24 left-1/2 -translate-x-1/2 bg-[#2481cc] text-white px-6 py-3 rounded-full text-sm font-bold shadow-2xl z-50 animate-in fade-in zoom-in duration-200">
-          {toastMsg}
+      {/* Floating Toast */}
+      {toast && (
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 bg-[#2481cc] text-white px-8 py-4 rounded-[2rem] text-[10px] font-black uppercase tracking-[0.3em] shadow-[0_10px_40px_rgba(36,129,204,0.4)] z-[200] animate-in fade-in zoom-in duration-300">
+          {toast}
         </div>
       )}
     </div>
   );
 };
 
-const rootElement = document.getElementById('root');
-if (rootElement) {
-  const root = createRoot(rootElement);
-  root.render(<App />);
-}
+const root = createRoot(document.getElementById('root')!);
+root.render(<App />);
