@@ -1,0 +1,5 @@
+{
+  "name": "Telegram AI Rewriter Admin",
+  "description": "Interface for managing your personal AI-powered Telegram news rewriter bot. Set source channels, style references, and monitor bot status.",
+  "requestFramePermissions": []
+}
