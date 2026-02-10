@@ -1,8 +1,11 @@
 [phases.setup]
-nixPkgs = ["python310", "nodejs"]
+nixPkgs = ["python310", "nodejs-18_x", "pip"]
 
 [phases.install]
-cmds = ["pip install -r requirements.txt", "npm install"]
+cmds = [
+  "python3 -m pip install -r requirements.txt",
+  "npm install"
+]
 
 [start]
-cmd = "python main.py & npm run dev -- --host 0.0.0.0 --port 5173"
+cmd = "python3 main.py & npm run dev -- --host 0.0.0.0 --port 5173"
