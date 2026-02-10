@@ -1,41 +1,50 @@
+
 import os
 import asyncio
 import logging
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 import google.generativeai as genai
+from supabase import create_client, Client
 from dotenv import load_dotenv
 
-# Загрузка .env для локальной разработки
+# Загрузка переменных
 load_dotenv()
 
-# --- Настройка переменных окружения ---
+# --- Конфигурация ---
 API_ID = int(os.getenv('API_ID', 0))
 API_HASH = os.getenv('API_HASH', '')
-BOT_TOKEN = os.getenv('BOT_TOKEN', '')
-GEMINI_KEY = os.getenv('GEMINI_KEY', '')
 SESSION_STRING = os.getenv('TELEGRAM_SESSION', '')
-MY_ID = 7991221711  # Ваш Telegram ID
+GEMINI_KEY = os.getenv('GEMINI_KEY', '')
+SUPABASE_URL = os.getenv('SUPABASE_URL', '')
+SUPABASE_KEY = os.getenv('SUPABASE_KEY', '')
+MY_ID = 7991221711 
 
-# --- Конфигурация доноров ---
+# Каналы
 DONOR_CHANNELS = ['@giftnews', '@gift_newstg', '@digest', '@UaOnlii']
 
-# --- Инициализация Gemini ---
+# --- Инициализация клиентов ---
 genai.configure(api_key=GEMINI_KEY)
 model = genai.GenerativeModel('gemini-2.0-flash')
-
-# --- Инициализация клиента Telethon ---
-# Используется StringSession для обхода необходимости ввода кода при каждом запуске
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
+async def save_to_db(source: str, content: str):
+    """Запись новости в Supabase"""
+    try:
+        data = {
+            "source": source,
+            "content": content,
+            "created_at": "now()"
+        }
+        supabase.table("news").insert(data).execute()
+        print(f"💾 Сохранено в БД от {source}")
+    except Exception as e:
+        print(f"❌ Ошибка БД: {e}")
+
 async def perform_rewrite(text):
-    """Отправка текста в Gemini для профессионального рерайта."""
-    prompt = (
-        "Ты — опытный редактор Telegram-каналов. Твоя задача — сделать качественный рерайт "
-        "новости. Текст должен быть коротким, захватывающим, с использованием эмодзи и "
-        "четкой структурой. Не добавляй отсебятины, только рерайт новости.\n\n"
-        f"ТЕКСТ ДЛЯ РЕРАЙТА:\n{text}"
-    )
+    """Рерайт через Gemini"""
+    prompt = f"Ты редактор TG-канала. Сделай краткий и яркий рерайт новости с эмодзи:\n\n{text}"
     try:
         response = model.generate_content(prompt)
         return response.text
@@ -45,56 +54,33 @@ async def perform_rewrite(text):
 
 @client.on(events.NewMessage(chats=DONOR_CHANNELS))
 async def message_handler(event):
-    """Слушатель новых сообщений в каналах-донорах."""
-    if not event.text or len(event.text) < 10:
+    if not event.text or len(event.text) < 15:
         return
 
-    # Логирование
     chat = await event.get_chat()
-    chat_name = getattr(chat, 'username', 'unknown')
-    print(f"📥 Получено сообщение из @{chat_name}")
+    chat_name = getattr(chat, 'username', chat.title)
+    print(f"📥 Новое сообщение из {chat_name}")
 
-    # Рерайт
-    rewritten_text = await perform_rewrite(event.text)
-    
-    if rewritten_text:
+    rewritten = await perform_rewrite(event.text)
+    if rewritten:
+        # 1. Отправляем в личку
         try:
-            # Отправка готового поста вам
-            output_msg = (
-                f"✨ **ГОТОВЫЙ РЕРАЙТ**\n\n"
-                f"{rewritten_text}\n\n"
-                f"--- \n"
-                f"🔗 Источник: @{chat_name}"
-            )
-            await client.send_message(MY_ID, output_msg)
-            print(f"🚀 Рерайт успешно отправлен пользователю {MY_ID}")
-        except Exception as e:
-            print(f"❌ Ошибка при отправке сообщения: {e}")
+            await client.send_message(MY_ID, f"✨ **РЕРАЙТ**\n\n{rewritten}\n\n🔗 Источник: {chat_name}")
+        except: pass
+        
+        # 2. Сохраняем в базу для Mini App
+        await save_to_db(chat_name, rewritten)
 
 async def start_bot():
     print("🛰 Бот запускается...")
-    
-    # Проверка конфигурации
-    if not all([API_ID, API_HASH, SESSION_STRING, GEMINI_KEY]):
-        print("❌ ОШИБКА: Не все переменные окружения заданы (API_ID, API_HASH, TELEGRAM_SESSION, GEMINI_KEY)")
+    if not all([API_ID, API_HASH, SESSION_STRING, GEMINI_KEY, SUPABASE_URL, SUPABASE_KEY]):
+        print("❌ ОШИБКА: Проверьте все ENV переменные!")
         return
 
-    try:
-        await client.start()
-        print("✅ Авторизация в Telegram выполнена!")
-        print(f"📡 Мониторинг каналов: {', '.join(DONOR_CHANNELS)}")
-        
-        # Уведомление о запуске
-        await client.send_message(MY_ID, "🟢 Бот успешно запущен на Railway и готов к работе!")
-    except Exception as e:
-        print(f"❌ Критическая ошибка при старте: {e}")
-        return
-
+    await client.start()
+    print("✅ Бот онлайн и мониторит каналы.")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
-    try:
-        asyncio.run(start_bot())
-    except KeyboardInterrupt:
-        print("🛑 Бот остановлен вручную.")
+    asyncio.run(start_bot())

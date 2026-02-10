@@ -1,0 +1,6 @@
+
+{
+  "name": "Telegram Bot Backend",
+  "description": "Python worker for Telegram News Rewriting",
+  "requestFramePermissions": []
+}
