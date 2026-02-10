@@ -1,6 +1,7 @@
-
 telethon
 google-generativeai
 python-dotenv
 cryptg
 supabase
+fastapi
+uvicorn

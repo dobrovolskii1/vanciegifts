@@ -1,145 +1,79 @@
 import os
 import asyncio
-import logging
+import google.generativeai as genai
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.tl.functions.channels import JoinChannelRequest
-import google.generativeai as genai
 from supabase import create_client, Client
+from fastapi import FastAPI, Response
+from fastapi.responses import FileResponse
 from dotenv import load_dotenv
+import uvicorn
 
-# Загрузка .env
 load_dotenv()
 
-# --- Конфигурация ---
+# --- Config ---
 API_ID = int(os.getenv('API_ID', 0))
 API_HASH = os.getenv('API_HASH', '')
 SESSION_STRING = os.getenv('TELEGRAM_SESSION', '')
-GEMINI_KEY = os.getenv('API_KEY', os.getenv('GEMINI_KEY', '')) # Ищем оба варианта
+GEMINI_KEY = os.getenv('API_KEY', '')
 SUPABASE_URL = os.getenv('SUPABASE_URL', '')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY', '')
-MY_ID = 7991221711 
+MY_ID = int(os.getenv('MY_TELEGRAM_ID', 7991221711))
+PORT = int(os.getenv('PORT', 8080))
 
-# Каналы для мониторинга
-DONOR_CHANNELS = ['@giftnews', '@gift_newstg', '@digest', '@UaOnlii']
-
-# --- Инициализация ИИ ---
+# --- Services Init ---
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
-    model = genai.GenerativeModel('gemini-3-flash-preview')
-else:
-    print("⚠️ ПРЕДУПРЕЖДЕНИЕ: Ключ GEMINI_KEY не найден.")
+    ai = genai.GenerativeModel('gemini-3-flash-preview')
 
-# Supabase
+supabase: Client = None
 if SUPABASE_URL and SUPABASE_KEY:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-else:
-    print("⚠️ ПРЕДУПРЕЖДЕНИЕ: Настройки Supabase отсутствуют.")
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Telethon
 client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+app = FastAPI()
 
-async def check_db_connection():
-    """Проверка доступности таблицы"""
+# --- Web Routes ---
+@app.get("/")
+async def serve_index(): return FileResponse('index.html')
+
+@app.get("/index.tsx")
+async def serve_tsx(): return FileResponse('index.tsx', media_type='text/javascript')
+
+@app.get("/env.js")
+async def serve_env():
+    content = f"window.process = {{ env: {{ API_KEY: '{GEMINI_KEY}', SUPABASE_URL: '{SUPABASE_URL}', SUPABASE_KEY: '{SUPABASE_KEY}' }} }};"
+    return Response(content=content, media_type="application/javascript")
+
+# --- AI & Logic ---
+async def rewrite_post(text):
+    prompt = f"Перепиши этот пост для Telegram. Сделай его захватывающим, коротким и сохрани суть:\n\n{text}"
     try:
-        supabase.table("news").select("id").limit(1).execute()
-        print("✅ [DB] Подключение к таблице 'news' успешно.")
-    except Exception as e:
-        print(f"❌ [DB] Таблица 'news' не найдена или недоступна: {e}")
-        print("💡 СОВЕТ: Создайте таблицу 'news' в Supabase SQL Editor.")
-
-async def ensure_subscribed():
-    """Автоматическая подписка на каналы"""
-    print("🔄 [TELEGRAM] Проверка доступа к каналам...")
-    for channel in DONOR_CHANNELS:
-        try:
-            await client(JoinChannelRequest(channel))
-            print(f"✅ Доступ подтвержден: {channel}")
-        except Exception as e:
-            print(f"⚠️ Ошибка доступа к {channel}: {e}")
-
-async def save_to_db(source: str, content: str):
-    """Сохранение результата рерайта"""
-    try:
-        data = {"source": source, "content": content}
-        supabase.table("news").insert(data).execute()
-        print(f"💾 [SUCCESS] Пост сохранен в Mini App.")
-    except Exception as e:
-        print(f"❌ [DB ERROR] Ошибка сохранения: {e}")
-
-async def perform_rewrite(text):
-    """Рерайт с использованием Gemini 3 Flash"""
-    prompt = (
-        "Ты — топовый автор Telegram-канала. Твоя задача — переписать новость ниже. "
-        "Требования: кратко, информативно, без воды, 2-3 эмодзи. "
-        "ВАЖНО: удали любые ссылки на другие каналы, ботов и рекламу источников. "
-        "Текст должен выглядеть как авторский пост твоего канала.\n\n"
-        f"ТЕКСТ ДЛЯ ОБРАБОТКИ:\n{text}"
-    )
-    try:
-        response = model.generate_content(prompt)
+        response = await ai.generate_content(prompt)
         return response.text.strip()
-    except Exception as e:
-        print(f"❌ [AI ERROR] Ошибка генерации: {e}")
-        return None
+    except: return None
 
-@client.on(events.NewMessage(chats=DONOR_CHANNELS))
-async def message_handler(event):
-    # Игнорируем слишком короткие сообщения и пересылки (часто это реклама)
-    if not event.text or len(event.text) < 30:
-        return
+@client.on(events.NewMessage(chats=['@giftnews', '@durov', '@techcrunch'])) # Добавь свои каналы тут
+async def handler(event):
+    if not event.text or len(event.text) < 30: return
     
-    if event.fwd_from:
-        print("⏭ [SKIP] Пропуск пересланного сообщения.")
-        return
-
-    # Простая фильтрация рекламных слов
-    ads_keywords = ['подпишись', 'купить', 'реклама', 't.me/']
-    count_ads = sum(1 for word in ads_keywords if word in event.text.lower())
-    if count_ads > 2:
-        print("⏭ [SKIP] Обнаружена высокая концентрация рекламных ссылок.")
-        return
-
-    try:
-        chat = await event.get_chat()
-        source_name = getattr(chat, 'username', 'Channel')
-    except:
-        source_name = "Source"
-
-    print(f"📥 [NEW] Сообщение из @{source_name}. Начинаю рерайт...")
-
-    rewritten = await perform_rewrite(event.text)
-    
+    rewritten = await rewrite_post(event.text)
     if rewritten:
-        # Отправка администратору для проверки
-        try:
-            await client.send_message(MY_ID, f"🚀 **ПРЕДЛОЖЕНИЕ ДЛЯ ПОСТА (от @{source_name})**\n\n{rewritten}")
-        except: pass
+        # Уведомляем владельца
+        await client.send_message(MY_ID, f"📢 **Новый пост готов:**\n\n{rewritten}")
         
-        # Сохранение в базу данных для Mini App
-        await save_to_db(source_name, rewritten)
-    else:
-        print(f"⚠️ [FAILED] Не удалось создать рерайт для поста из @{source_name}")
+        # Сохраняем в Supabase
+        if supabase:
+            chat = await event.get_chat()
+            source = getattr(chat, 'username', 'Unknown')
+            supabase.table("news").insert({"source": f"@{source}", "content": rewritten}).execute()
 
-async def main():
-    print("--- 🛠 AGENT PRO WORKER INITIALIZATION ---")
-    
-    if not all([API_ID, API_HASH, SESSION_STRING]):
-        print("❌ КРИТИЧЕСКАЯ ОШИБКА: Проверьте API_ID, API_HASH и TELEGRAM_SESSION в Railway.")
-        return
+# --- Lifecycle ---
+@app.on_event("startup")
+async def startup():
+    print("🚀 Starting Telegram Client...")
+    await client.start()
+    asyncio.create_task(client.run_until_disconnected())
 
-    try:
-        await client.start()
-        print("✅ [TELEGRAM] Авторизация успешна.")
-        
-        await check_db_connection()
-        await ensure_subscribed()
-        
-        print("\n📡 [LIVE] Мониторинг запущен. Ожидаю новые посты...")
-        await client.run_until_disconnected()
-    except Exception as e:
-        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
-
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.ERROR)
-    asyncio.run(main())
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=PORT)

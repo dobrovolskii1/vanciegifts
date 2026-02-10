@@ -1,6 +1,5 @@
-
 {
-  "name": "Telegram Bot Backend",
-  "description": "Python worker for Telegram News Rewriting",
+  "name": "AI News Assistant",
+  "description": "Telegram Mini App for Content Rewriting",
   "requestFramePermissions": []
 }
