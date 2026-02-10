@@ -3,24 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>AI Content Agent</title>
+    <title>AI Content Assistant</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap');
-        :root { --tg-theme-bg: #0a0a0b; --tg-theme-accent: #2481cc; }
-        body { 
-            background: var(--tg-theme-bg); 
-            color: #ffffff; 
-            font-family: 'Inter', sans-serif; 
-            margin: 0; padding: 0;
-            user-select: none;
-            -webkit-tap-highlight-color: transparent;
-        }
-        .glass { background: rgba(18, 18, 20, 0.8); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        body { background: #0a0a0b; color: #fff; font-family: 'Inter', sans-serif; margin: 0; }
+        .tg-blur { background: rgba(18, 18, 20, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
         .card { background: #121214; border: 1px solid rgba(255,255,255,0.05); border-radius: 24px; }
+        .btn-primary { background: #2481cc; box-shadow: 0 4px 15px rgba(36, 129, 204, 0.3); }
         ::-webkit-scrollbar { display: none; }
-        .tab-active { color: var(--tg-theme-accent); border-bottom: 2px solid var(--tg-theme-accent); }
     </style>
     <script type="importmap">
 {
